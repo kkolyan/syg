@@ -13,7 +13,7 @@ pub fn start_watch(name: &'static str) -> StopWatch {
 }
 
 impl StopWatch {
-	pub fn force_complete(self) {}
+    pub fn force_complete(self) {}
 }
 
 impl Drop for StopWatch {

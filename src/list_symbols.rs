@@ -1,11 +1,8 @@
 use core::fmt;
-use std::{collections::BTreeMap, fs, str::from_utf8};
+use std::{fs, str::from_utf8};
 
 use quote::ToTokens;
-use syn::{
-    fold::Fold, parse_file, visit::Visit, Expr, Ident, Item, Lit, LitStr, MetaNameValue, PatLit,
-    UseTree,
-};
+use syn::{parse_file, visit::Visit, Expr, Ident, Item, Lit, MetaNameValue, UseTree};
 
 use crate::{
     model::{Database, GlobalIdent},
@@ -75,8 +72,8 @@ impl SymbolsExplorer<'_> {
                 let new_path = if path.is_empty() {
                     let mut name = it.ident.to_string();
                     if name == "crate" {
-						name.clone_from(self.mod_stack.first().unwrap());
-					}
+                        name.clone_from(self.mod_stack.first().unwrap());
+                    }
                     vec![name]
                 } else {
                     let mut v = path.clone();
@@ -146,6 +143,16 @@ impl Database {
 }
 
 impl<'ast> Visit<'ast> for SymbolsExplorer<'_> {
+    fn visit_item(&mut self, i: &'ast syn::Item) {
+        syn::visit::visit_item(self, i);
+        if let Some(ident) = Self::ident_of_item(i) {
+            self.db.decls.insert(
+                GlobalIdent::from_path_and_name(&self.mod_stack, ident.to_string().as_str()),
+                Decl::AST(i.clone()),
+            );
+        }
+    }
+
     fn visit_item_mod(&mut self, i: &'ast syn::ItemMod) {
         // println!("mod {}", i.ident);
         match &i.content {
@@ -203,44 +210,33 @@ impl<'ast> Visit<'ast> for SymbolsExplorer<'_> {
         }
     }
 
-    fn visit_item(&mut self, i: &'ast syn::Item) {
-        if let Some(ident) = Self::ident_of_item(i) {
-            self.db.decls.insert(
-                GlobalIdent::from_path_and_name(&self.mod_stack, ident.to_string().as_str()),
-                Decl::AST(i.clone()),
-            );
-        }
-        if let Item::Use(i) = i {
-            self.collect_uses(&i.tree, vec![]);
-        }
-        syn::visit::visit_item(self, i);
+    fn visit_item_use(&mut self, i: &'ast syn::ItemUse) {
+        self.collect_uses(&i.tree, vec![]);
     }
 
-    fn visit_item_use(&mut self, i: &'ast syn::ItemUse) {}
+    fn visit_item_enum(&mut self, _i: &'ast syn::ItemEnum) {}
 
-    fn visit_item_enum(&mut self, i: &'ast syn::ItemEnum) {}
+    fn visit_item_impl(&mut self, _i: &'ast syn::ItemImpl) {}
 
-    fn visit_item_impl(&mut self, i: &'ast syn::ItemImpl) {}
+    fn visit_item_fn(&mut self, _i: &'ast syn::ItemFn) {}
 
-    fn visit_item_fn(&mut self, i: &'ast syn::ItemFn) {}
+    fn visit_item_macro(&mut self, _i: &'ast syn::ItemMacro) {}
 
-    fn visit_item_macro(&mut self, i: &'ast syn::ItemMacro) {}
+    fn visit_item_static(&mut self, _i: &'ast syn::ItemStatic) {}
 
-    fn visit_item_static(&mut self, i: &'ast syn::ItemStatic) {}
+    fn visit_item_extern_crate(&mut self, _i: &'ast syn::ItemExternCrate) {}
 
-    fn visit_item_extern_crate(&mut self, i: &'ast syn::ItemExternCrate) {}
+    fn visit_item_struct(&mut self, _i: &'ast syn::ItemStruct) {}
 
-    fn visit_item_struct(&mut self, i: &'ast syn::ItemStruct) {}
+    fn visit_item_type(&mut self, _i: &'ast syn::ItemType) {}
 
-    fn visit_item_type(&mut self, i: &'ast syn::ItemType) {}
+    fn visit_item_union(&mut self, _i: &'ast syn::ItemUnion) {}
 
-    fn visit_item_union(&mut self, i: &'ast syn::ItemUnion) {}
+    fn visit_item_const(&mut self, _i: &'ast syn::ItemConst) {}
 
-    fn visit_item_const(&mut self, i: &'ast syn::ItemConst) {}
+    fn visit_item_foreign_mod(&mut self, _i: &'ast syn::ItemForeignMod) {}
 
-    fn visit_item_foreign_mod(&mut self, i: &'ast syn::ItemForeignMod) {}
+    fn visit_item_trait(&mut self, _i: &'ast syn::ItemTrait) {}
 
-    fn visit_item_trait(&mut self, i: &'ast syn::ItemTrait) {}
-
-    fn visit_item_trait_alias(&mut self, i: &'ast syn::ItemTraitAlias) {}
+    fn visit_item_trait_alias(&mut self, _i: &'ast syn::ItemTraitAlias) {}
 }

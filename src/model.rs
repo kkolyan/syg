@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fmt::Display, ops::Add};
+use std::{collections::BTreeMap, fmt::Display};
 
 use crate::list_symbols::{Decl, UseWildcard};
 
