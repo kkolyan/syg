@@ -1,8 +1,15 @@
+pub mod dedoc;
+pub mod bake_wildcards;
+pub mod global_ident;
+pub mod resolve_idents;
 use std::fmt::Display;
 
-pub mod list_symbols;
+pub mod add_crate;
 pub mod model;
 pub mod stopwatch;
+
+pub use global_ident::GlobalIdent;
+pub use model::*;
 
 #[extend::ext]
 pub impl &str {

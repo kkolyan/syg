@@ -5,6 +5,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-syn = {version = "2.0.68", features = ["full", "visit", "extra-traits"]}
+# syn = {version = "2.0.68", features = ["full", "visit", "extra-traits"]}
+syn = {version = "2.0.68", path = "../syn_sig_rtype", package = "syn-rpath", features = ["full", "visit", "visit-mut", "extra-traits", "printing", "parsing"]}
 extend = "1.2.0"
-quote = "1.0.36"
+quote = {version = "1.0.36", features = []}
+to_vec = "0.1.0"
+proc-macro2 = "1.0.86"

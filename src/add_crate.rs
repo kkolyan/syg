@@ -1,29 +1,30 @@
 use core::fmt;
-use std::{fs, str::from_utf8};
+use std::{fs, rc::Rc, str::from_utf8, sync::Arc};
 
 use quote::ToTokens;
 use syn::{parse_file, visit::Visit, Expr, Ident, Item, Lit, MetaNameValue, UseTree};
 
 use crate::{
-    model::{Database, GlobalIdent},
-    RefstrExt,
+    Database, Decl, DeclAst, GlobalIdent, RefstrExt, WildcardImport
 };
+
+impl Database {
+    pub fn add_crate(&mut self, base_path: &str, name: &str) {
+        let src_path = base_path.concat("/").concat(name).concat("/src");
+        let lib_path = src_path.add_file_segment("lib.rs");
+        let mut visitor = SymbolsExplorer {
+            crate_src: src_path.to_string(),
+            mod_stack: Default::default(),
+            db: self,
+        };
+        visitor.add_file(name, &lib_path);
+    }
+}
 
 struct SymbolsExplorer<'a> {
     crate_src: String,
     mod_stack: Vec<String>,
     db: &'a mut Database,
-}
-
-#[derive(Debug)]
-pub struct UseWildcard {
-    from: String,
-    to: String,
-}
-
-#[derive(Debug)]
-pub enum Decl {
-    AST(syn::Item),
 }
 
 impl SymbolsExplorer<'_> {
@@ -71,10 +72,14 @@ impl SymbolsExplorer<'_> {
             UseTree::Path(it) => {
                 let new_path = if path.is_empty() {
                     let mut name = it.ident.to_string();
-                    if name == "crate" {
-                        name.clone_from(self.mod_stack.first().unwrap());
+                    if name == "self" {
+                        self.mod_stack.clone()
+                    } else {
+                        if name == "crate" {
+                            name.clone_from(self.mod_stack.first().unwrap());
+                        }
+                        vec![name]
                     }
-                    vec![name]
                 } else {
                     let mut v = path.clone();
                     v.push(it.ident.to_string());
@@ -84,25 +89,28 @@ impl SymbolsExplorer<'_> {
             }
             UseTree::Name(it) => {
                 let name = it.ident.to_string();
-                self.db.use_aliases.insert(
+                self.db.decls.insert(
                     GlobalIdent::from_path_and_name(&self.mod_stack, &name),
-                    GlobalIdent::from_path_and_name(&path, &name),
+                    Decl::Import(GlobalIdent::from_path_and_name(&path, &name)),
                 );
             }
             UseTree::Rename(it) => {
-                self.db.use_aliases.insert(
+                self.db.decls.insert(
                     GlobalIdent::from_path_and_name(
                         &self.mod_stack,
                         it.rename.to_string().as_str(),
                     ),
-                    GlobalIdent::from_path_and_name(&path, it.ident.to_string().as_str()),
+                    Decl::Import(GlobalIdent::from_path_and_name(
+                        &path,
+                        it.ident.to_string().as_str(),
+                    )),
                 );
             }
             UseTree::Glob(_it) => {
-                self.db.use_wildcards.push(UseWildcard {
-                    from: self.mod_stack.join("::") + "::",
-                    to: path.join("::") + "::",
-                });
+                self.db.wildcard_imports.push(Rc::new(WildcardImport {
+					target: GlobalIdent::from_path(&self.mod_stack),
+					source: GlobalIdent::from_path(&path),
+				}));
             }
             UseTree::Group(it) => {
                 for it in it.items.iter() {
@@ -113,48 +121,31 @@ impl SymbolsExplorer<'_> {
     }
 }
 
-impl Database {
-    pub fn add_crate(&mut self, base_path: &str, name: &str) {
-        let src_path = base_path.concat("/").concat(name).concat("/src");
-        let lib_path = src_path.add_file_segment("lib.rs");
-        let mut visitor = SymbolsExplorer {
-            crate_src: src_path.to_string(),
-            mod_stack: Default::default(),
-            db: self,
-        };
-        visitor.add_file(name, &lib_path);
-    }
-
-    pub fn print_to(&self, f: &mut dyn fmt::Write) -> fmt::Result {
-        writeln!(f, "decls:")?;
-        for (ident, _decl) in self.decls.iter() {
-            writeln!(f, "  - {}", ident)?;
-        }
-        writeln!(f, "use_aliases:")?;
-        for (k, v) in self.use_aliases.iter() {
-            writeln!(f, "  - {}: {}", k, v)?;
-        }
-        writeln!(f, "use_wildcards:")?;
-        for UseWildcard { from, to } in self.use_wildcards.iter() {
-            writeln!(f, "  - {:?}: {:?}", from, to)?;
-        }
-        Ok(())
-    }
-}
-
 impl<'ast> Visit<'ast> for SymbolsExplorer<'_> {
     fn visit_item(&mut self, i: &'ast syn::Item) {
         syn::visit::visit_item(self, i);
         if let Some(ident) = Self::ident_of_item(i) {
+			if ident == "test" {
+				return;
+			}
+			if ident == "tests" {
+				return;
+			}
             self.db.decls.insert(
                 GlobalIdent::from_path_and_name(&self.mod_stack, ident.to_string().as_str()),
-                Decl::AST(i.clone()),
+                Decl::Ast(DeclAst::Ok(i.clone())),
             );
         }
     }
 
     fn visit_item_mod(&mut self, i: &'ast syn::ItemMod) {
         // println!("mod {}", i.ident);
+		if i.ident == "test" {
+			return;
+		}
+		if i.ident == "tests" {
+			return;
+		}
         match &i.content {
             Some((_brace, content)) => {
                 self.with_mod(i.ident.to_string().as_str(), |self_| {
@@ -213,30 +204,4 @@ impl<'ast> Visit<'ast> for SymbolsExplorer<'_> {
     fn visit_item_use(&mut self, i: &'ast syn::ItemUse) {
         self.collect_uses(&i.tree, vec![]);
     }
-
-    fn visit_item_enum(&mut self, _i: &'ast syn::ItemEnum) {}
-
-    fn visit_item_impl(&mut self, _i: &'ast syn::ItemImpl) {}
-
-    fn visit_item_fn(&mut self, _i: &'ast syn::ItemFn) {}
-
-    fn visit_item_macro(&mut self, _i: &'ast syn::ItemMacro) {}
-
-    fn visit_item_static(&mut self, _i: &'ast syn::ItemStatic) {}
-
-    fn visit_item_extern_crate(&mut self, _i: &'ast syn::ItemExternCrate) {}
-
-    fn visit_item_struct(&mut self, _i: &'ast syn::ItemStruct) {}
-
-    fn visit_item_type(&mut self, _i: &'ast syn::ItemType) {}
-
-    fn visit_item_union(&mut self, _i: &'ast syn::ItemUnion) {}
-
-    fn visit_item_const(&mut self, _i: &'ast syn::ItemConst) {}
-
-    fn visit_item_foreign_mod(&mut self, _i: &'ast syn::ItemForeignMod) {}
-
-    fn visit_item_trait(&mut self, _i: &'ast syn::ItemTrait) {}
-
-    fn visit_item_trait_alias(&mut self, _i: &'ast syn::ItemTraitAlias) {}
 }
