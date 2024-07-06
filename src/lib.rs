@@ -1,3 +1,4 @@
+pub mod eval_cfg;
 pub mod named_tree;
 pub mod dedoc;
 pub mod bake_wildcards;

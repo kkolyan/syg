@@ -10,13 +10,26 @@ use proc_macro2::Span;
 use quote::{quote, ToTokens};
 use syn::{parse2, parse_str, Ident, Item, ItemStruct, Path};
 
-use crate::{dedoc::ItemExt, ident_part::RefSliceOfIdentPartExt, named_tree::NamedNode, GlobalIdent, IdentPart};
+use crate::{
+    dedoc::ItemExt, ident_part::RefSliceOfIdentPartExt, named_tree::{FromPath, NamedNode}, GlobalIdent,
+    IdentPart,
+};
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct Database {
-    pub decls: NamedNode<IdentPart, Decl>,
+    pub decls: NamedNode<IdentPart, Binding>,
     pub wildcard_imports_temp: Vec<Rc<WildcardImport>>,
     pub unresolved: BTreeMap<String, UnresolvedCtx>,
+}
+
+impl Default for Database {
+    fn default() -> Self {
+        Self {
+            decls: NamedNode::new(Binding::new_empty(GlobalIdent::root())),
+            wildcard_imports_temp: Default::default(),
+            unresolved: Default::default(),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -27,10 +40,6 @@ pub struct UnresolvedCtx {
 
 impl Database {
     pub fn compile(&mut self) {
-        self.decls.set_value(Decl::Mod(Mod {
-            address: GlobalIdent::root(),
-            wildcard_imported_mods: Default::default(),
-        }));
         // TODO delete it
         // self.bake_wildcards();
         self.resolve_idents();
@@ -45,7 +54,7 @@ impl Database {
 
     fn lookup_internal<'a, 'b, 'c>(
         &'a self,
-        base: &'b NamedNode<IdentPart, Decl>,
+        base: &'b NamedNode<IdentPart, Binding>,
         path: &[IdentPart],
         depth: usize,
         checked: &mut HashSet<GlobalIdent>,
@@ -66,59 +75,56 @@ impl Database {
             base.get_value()
         );
         let value = base.get_value();
-        match value {
-            Decl::Ast(ast) => {
-                if path.is_empty() {
-                    return Some(ast);
-                }
-                panic!(
-                    "attempt to resolve path {} against AST {}",
-                    path.to_global_path(),
-                    ast
-                )
-            }
-            Decl::Import(import, _) => {
-                println!("      {}import {}", indent, import);
-                let mut new_path = import.to_parts();
-                new_path.extend_from_slice(path);
-                return self.lookup_internal(&self.decls, &new_path, depth + 1, checked);
-            }
-            Decl::Mod(mod_) => {
-                println!(
-                    "      {}checking mod \"{}\"",
-                    indent,
-                    base.path().to_global_path()
-                );
-                let (first, rem) = path.split_first().unwrap();
-                if let Some(decl) = base.get_child(first) {
-                    let mut new_base_path = base.path().to_vec();
-                    new_base_path.push(first.clone());
-                    return self.lookup_internal(decl, rem, depth + 1, checked);
-                }
-                if mod_.wildcard_imported_mods.is_empty() {
-                    println!("      {}no wildcard imports", indent);
-                }
-                for wildcard_import in mod_.wildcard_imported_mods.iter() {
-                    println!(
-                        "      {}checking wildcard import {} (path: {}, base_path: {})",
-                        indent,
-                        wildcard_import,
-                        path.to_global_path(),
-                        base.path().to_global_path()
-                    );
+		if let Some(ast) = &value.type_ast {
+			if path.is_empty() {
+				return Some(ast);
+			}
+			panic!(
+				"attempt to resolve path {} against AST {}",
+				path.to_global_path(),
+				ast
+			)
+		}
+		for (import, _kind) in value.alias_for.iter() {
+			println!("      {}import {}", indent, import);
+			let mut new_path = import.to_parts();
+			new_path.extend_from_slice(path);
+			if let Some(result) = self.lookup_internal(&self.decls, &new_path, depth + 1, checked) {
+				return Some(result);
+			}
+		}
+		println!(
+			"      {}checking as a mod \"{}\"",
+			indent,
+			base.path().to_global_path()
+		);
+		let (first, rem) = path.split_first().unwrap();
+		if let Some(decl) = base.get_child(first) {
+			let mut new_base_path = base.path().to_vec();
+			new_base_path.push(first.clone());
+			return self.lookup_internal(decl, rem, depth + 1, checked);
+		}
+		if value.wildcard_alias_for.is_empty() {
+			println!("      {}no wildcard imports", indent);
+		}
+		for wildcard_import in value.wildcard_alias_for.iter() {
+			println!(
+				"      {}checking wildcard import {} (path: {}, base_path: {})",
+				indent,
+				wildcard_import,
+				path.to_global_path(),
+				base.path().to_global_path()
+			);
 
-                    let mut new_path = wildcard_import.to_parts();
-                    new_path.extend_from_slice(path);
-                    if let Some(result) =
-                        self.lookup_internal(&self.decls, &new_path, depth + 1, checked)
-                    {
-                        return Some(result);
-                    }
-                }
-                None
-            }
-            Decl::None => unimplemented!(),
-        }
+			let mut new_path = wildcard_import.to_parts();
+			new_path.extend_from_slice(path);
+			if let Some(result) =
+				self.lookup_internal(&self.decls, &new_path, depth + 1, checked)
+			{
+				return Some(result);
+			}
+		}
+		None
     }
 
     pub fn print_to(&self, f: &mut dyn fmt::Write) -> fmt::Result {
@@ -144,19 +150,10 @@ impl Database {
         let qualified = &GlobalIdent::from_qualified_name(name);
 
         self.decls
-            .find_or_create(&qualified.parent(), |path| {
-                println!("initialize mod {}", path.to_global_path());
-                Decl::Mod(Mod {
-                    address: path.to_global_path(),
-                    wildcard_imported_mods: Default::default(),
-                })
-            })
+            .find_or_create(&qualified.parent())
             .add_child(
                 qualified.last_part(),
-                Decl::Ast(DeclAst {
-                    address: qualified.clone(),
-                    ast,
-                }),
+                Binding::new_type_ast(qualified.clone(), ast),
             );
     }
 }
@@ -167,9 +164,84 @@ pub struct WildcardImport {
     pub source: GlobalIdent,
 }
 
-pub struct Node {
-	decl: Decl,
-	mod_: Mod,
+/// Rust allow sharing one local name sometimes:
+/// - mod with functions and consts
+/// - derive with traits
+/// - types, traits and structs with functions and constants
+/// - imports inherit sharing properties of the item it import
+#[derive(Debug)]
+pub struct Binding {
+    pub address: GlobalIdent,
+    pub non_type_ast: Option<DeclAst>,
+	pub type_ast: Option<DeclAst>,
+    /// if this binding is targeted by `use` operator
+    pub alias_for: Vec<(GlobalIdent, ImportKind)>,
+    /// means this binding imports all children from all these binding
+    pub wildcard_alias_for: BTreeSet<GlobalIdent>,
+}
+
+impl FromPath<IdentPart> for Binding {
+	fn from_path(path: &[IdentPart]) -> Self {
+		Self::new_empty(path.to_global_path())
+	}
+}
+
+impl Binding {
+	pub fn new_empty(path: GlobalIdent) -> Self {
+		Binding {
+			address: path,
+			non_type_ast: Default::default(),
+			type_ast: Default::default(),
+			alias_for: Default::default(),
+			wildcard_alias_for: Default::default(),
+		}
+	}
+
+	pub fn new_type_ast(path: GlobalIdent, item: Item) -> Self {
+		Binding {
+			address: path.clone(),
+			non_type_ast: Default::default(),
+			type_ast: Some(DeclAst {
+				address: path,
+				ast: item,
+			}),
+			alias_for: Default::default(),
+			wildcard_alias_for: Default::default(),
+		}
+	}
+
+	pub fn new_non_type_ast(path: GlobalIdent, item: Item) -> Self {
+		Binding {
+			address: path.clone(),
+			non_type_ast: Some(DeclAst {
+				address: path,
+				ast: item,
+			}),
+			type_ast: Default::default(),
+			alias_for: Default::default(),
+			wildcard_alias_for: Default::default(),
+		}
+	}
+}
+
+impl Display for Binding {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "({})", self.address)?;
+		if let Some(ast) = &self.type_ast {
+			write!(f, " TypeAst({})", ast)?;
+		}
+		write!(f, "({})", self.address)?;
+		if let Some(ast) = &self.non_type_ast {
+			write!(f, " NonTypeAst({})", ast)?;
+		}
+		for (source, _) in self.alias_for.iter() {
+			write!(f, " Alias({})", source)?;
+		}
+		for source in self.wildcard_alias_for.iter() {
+			write!(f, " Wildcard({})", source)?;
+		}
+		Ok(())
+	}
 }
 
 #[derive(Debug)]
@@ -181,14 +253,14 @@ pub enum Decl {
 }
 
 impl Display for Decl {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		match self {
-			Decl::None => write!(f, "None"),
-			Decl::Ast(it) => write!(f, "Ast({})", it),
-			Decl::Import(it, kind) => write!(f, "Import({}, {:?})", it, kind),
-			Decl::Mod(it) => write!(f, "Mod({:?})", it),
-		}
-	}
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Decl::None => write!(f, "None"),
+            Decl::Ast(it) => write!(f, "Ast({})", it),
+            Decl::Import(it, kind) => write!(f, "Import({}, {:?})", it, kind),
+            Decl::Mod(it) => write!(f, "Mod({:?})", it),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -217,6 +289,11 @@ pub struct DeclAst {
 
 impl Display for DeclAst {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "({}) {}", self.address, self.ast.dedoc().to_token_stream())
+        write!(
+            f,
+            "({}) {}",
+            self.address,
+            self.ast.dedoc().to_token_stream()
+        )
     }
 }

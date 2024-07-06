@@ -3,7 +3,7 @@ use std::fmt::Display;
 use syn::{spanned::Spanned, Ident, Path, PathArguments, PathSegment};
 use to_vec::ToVec;
 
-use crate::GlobalIdent;
+use crate::{named_tree::PathDisplay, GlobalIdent};
 
 #[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Clone)]
 pub struct IdentPart(String);
@@ -28,5 +28,11 @@ impl IdentPart {
 pub impl &[IdentPart] {
 	fn to_global_path(&self) -> GlobalIdent {
 		GlobalIdent::from_ident_path(self)
+	}
+}
+
+impl PathDisplay for IdentPart {
+	fn display_path(path: &[Self]) -> String {
+		format!("{}", GlobalIdent::from_ident_path(path))
 	}
 }

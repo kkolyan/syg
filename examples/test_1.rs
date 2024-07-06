@@ -38,7 +38,6 @@ fn main() {
 	db.add_type_stub("std::time::Instant");
 	db.add_type_stub("mpsc::Sender");
 	db.add_type_stub("std::vec::Vec");
-	db.add_type_stub("std::vec::Vec");
 	db.add_type_stub("std::rc::Weak");
 	db.add_type_stub("std::rc::Rc");
 

@@ -1,8 +1,10 @@
 use std::{collections::BTreeMap, fmt::Debug};
 
+use crate::GlobalIdent;
+
 #[derive(Debug)]
 pub struct NamedNode<K, V> {
-	path: Vec<K>,
+    path: Vec<K>,
     value: V,
     children: BTreeMap<K, NamedNode<K, V>>,
 }
@@ -17,14 +19,34 @@ impl<K, V: Default> Default for NamedNode<K, V> {
     }
 }
 
-impl<K: Ord + Clone + Debug, V: Debug> NamedNode<K, V> {
-	pub fn children(&self) -> impl Iterator<Item=&NamedNode<K,V>> {
-		self.children.values()
+pub trait PathDisplay: Sized {
+    fn display_path(path: &[Self]) -> String;
+}
+
+pub trait FromPath<K>: Sized {
+	fn from_path(path: &[K]) -> Self;
+}
+
+impl<K: Ord + Clone + Debug + PathDisplay, V: Debug + FromPath<K>> NamedNode<K, V> {
+    pub fn new(value: V) -> Self {
+        Self {
+            path: Default::default(),
+            value,
+            children: Default::default(),
+        }
+    }
+
+	pub fn has_children(&self) -> bool {
+		!self.children.is_empty()
 	}
 
-	pub fn path(&self) -> &[K] {
-		&self.path
-	}
+    pub fn children(&self) -> impl Iterator<Item = &NamedNode<K, V>> {
+        self.children.values()
+    }
+
+    pub fn path(&self) -> &[K] {
+        &self.path
+    }
 
     pub fn get_child(&self, key: &K) -> Option<&NamedNode<K, V>> {
         self.children.get(key)
@@ -46,12 +68,28 @@ impl<K: Ord + Clone + Debug, V: Debug> NamedNode<K, V> {
         self.value = value
     }
 
+    pub fn get_or_create_child(&mut self, key: &K) -> &mut V {
+        let mut path = self.path.clone();
+        path.push(key.clone());
+        if !self.children.contains_key(&key) {
+			self.children.insert(
+				key.clone(),
+				NamedNode {
+					value: V::from_path(&path),
+					children: Default::default(),
+					path,
+				},
+			);
+        }
+		&mut self.children.get_mut(&key).unwrap().value
+    }
+
     pub fn add_child(&mut self, key: K, value: V) {
-		let mut path = self.path.clone();
-		path.push(key.clone());
-		if self.children.contains_key(&key) {
-			// panic!("path {:?} is already used", path);
-		}
+        let mut path = self.path.clone();
+        path.push(key.clone());
+        if self.children.contains_key(&key) {
+            panic!("path {} is already used", K::display_path(&path));
+        }
         self.children.insert(
             key,
             NamedNode {
@@ -62,10 +100,7 @@ impl<K: Ord + Clone + Debug, V: Debug> NamedNode<K, V> {
         );
     }
 
-    pub fn find_mut<'a, 'b>(
-        &'a mut self,
-        key: impl Into<Vec<K>>,
-    ) -> Option<&'a mut NamedNode<K, V>>
+    pub fn find_mut<'a, 'b>(&'a mut self, key: impl Into<Vec<K>>) -> Option<&'a mut NamedNode<K, V>>
     where
         K: 'b,
     {
@@ -83,28 +118,27 @@ impl<K: Ord + Clone + Debug, V: Debug> NamedNode<K, V> {
     where
         K: 'b,
     {
-		let me = format!("{:?} ({:?})", &self.path, &self.value);
-		let key = key.into();
-		if let Some(v) = self.find_mut(key.clone()) {
-			return v;
-		}
+        let me = format!("{:?} ({:?})", &self.path, &self.value);
+        let key = key.into();
+        if let Some(v) = self.find_mut(key.clone()) {
+            return v;
+        }
         panic!("failed to find {:?} against {}", key, me);
     }
 
     pub fn find_or_create<'a, 'b>(
         &'a mut self,
         key: impl Into<Vec<K>>,
-		initializer: impl Fn(&[K]) -> V,
     ) -> &'a mut NamedNode<K, V>
     where
         K: 'b,
     {
         let mut n = self;
         for part in key.into() {
-			let mut path = n.path.clone();
-			path.push(part.clone());
+            let mut path = n.path.clone();
+            path.push(part.clone());
             n = n.children.entry(part.clone()).or_insert_with(|| NamedNode {
-                value: initializer(&path),
+                value: V::from_path(&path),
                 children: Default::default(),
                 path,
             });
@@ -153,15 +187,25 @@ impl<K: Ord + Clone + Debug, V: Debug> NamedNode<K, V> {
         }
     }
 
-	pub fn left_join<V2>(&mut self, other: Option<&NamedNode<K,V2>>, f: &mut dyn FnMut(&mut V, Option<&V2>)) {
-		f(&mut self.value, other.map(|it| &it.value));
-		for (k, v) in self.children.iter_mut() {
-			let o = other.and_then(|it| it.children.get(k));
-			v.left_join(o, f);
-		}
-	}
+    pub fn left_join<V2>(
+        &mut self,
+        other: Option<&NamedNode<K, V2>>,
+        f: &mut dyn FnMut(&mut V, Option<&V2>),
+    ) {
+        f(&mut self.value, other.map(|it| &it.value));
+        for (k, v) in self.children.iter_mut() {
+            let o = other.and_then(|it| it.children.get(k));
+            v.left_join(o, f);
+        }
+    }
 }
 
+
+impl <T, K> FromPath<K> for Option<T> {
+	fn from_path(_path: &[K]) -> Self {
+		None
+	}
+}
 
 // use std::collections::btree_map::Iter as BTreeIter;
 // pub struct Iter<'a, K, V> {
