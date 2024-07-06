@@ -2,10 +2,10 @@ use core::fmt;
 use std::{fs, rc::Rc, str::from_utf8, sync::Arc};
 
 use quote::ToTokens;
-use syn::{parse_file, visit::Visit, Expr, Ident, Item, Lit, MetaNameValue, UseTree};
+use syn::{parse_file, visit::Visit, visit_mut::VisitMut, Expr, Ident, Item, Lit, MetaNameValue, UseTree};
 
 use crate::{
-    Database, Decl, DeclAst, GlobalIdent, IdentPart, ImportKind, RefstrExt, WildcardImport,
+    resolve_idents::BlocksClear, Database, Decl, DeclAst, GlobalIdent, IdentPart, ImportKind, RefstrExt, WildcardImport
 };
 
 impl Database {
@@ -33,7 +33,10 @@ impl SymbolsExplorer<'_> {
         let parent_path = GlobalIdent::from_path(&self.mod_stack);
         let parent = self.db.decls.find_mut_unchecked(&parent_path);
 
-        println!("add mod {} to {}", name, parent_path);
+        println!(
+            "add mod {}",
+            GlobalIdent::from_mod_and_name(&parent_path, name.as_str())
+        );
 
         self.mod_stack.push(name.clone());
 
@@ -54,7 +57,8 @@ impl SymbolsExplorer<'_> {
         println!("add_file( {:?}, {:?} )", name, fs_path);
         let content = fs::read(fs_path).unwrap();
         let content = from_utf8(&content).unwrap();
-        let ast = parse_file(content).unwrap();
+        let mut ast = parse_file(content).unwrap();
+        BlocksClear.visit_file_mut(&mut ast);
         self.with_mod(name, |visitor| {
             visitor.visit_file(&ast);
         });
@@ -103,25 +107,31 @@ impl SymbolsExplorer<'_> {
                 self.collect_uses(&it.tree, new_path);
             }
             UseTree::Name(it) => {
+                let taget = GlobalIdent::from_path_and_ident(&self.mod_stack, &it.ident);
+                let source = GlobalIdent::from_path_and_name(&path, it.ident.to_string().as_str());
+                println!("add import {} (from {})", taget, source);
                 self.db
                     .decls
-                    .find_mut_unchecked(&GlobalIdent::from_path(&self.mod_stack))
+                    .find_mut_unchecked(&taget.parent())
                     .add_child(
-                        IdentPart::from_ident(&it.ident),
+                        taget.last_part(),
                         Decl::Import(
-                            GlobalIdent::from_path_and_name(&path, it.ident.to_string().as_str()),
+                            source,
                             ImportKind::Normal,
                         ),
                     );
             }
             UseTree::Rename(it) => {
+                let source = GlobalIdent::from_path_and_name(&path, it.ident.to_string().as_str());
+                let target = GlobalIdent::from_path_and_ident(&self.mod_stack, &it.rename);
+                println!("add import {} (from {})", target, source);
                 self.db
                     .decls
-                    .find_mut_unchecked(&GlobalIdent::from_path(&self.mod_stack))
+                    .find_mut_unchecked(&target.parent())
                     .add_child(
-                        IdentPart::from_ident(&it.rename),
+                        target.last_part(),
                         Decl::Import(
-                            GlobalIdent::from_path_and_name(&path, it.ident.to_string().as_str()),
+                            source,
                             ImportKind::Normal,
                         ),
                     );
@@ -168,17 +178,13 @@ impl<'ast> Visit<'ast> for SymbolsExplorer<'_> {
             if ident == "tests" {
                 return;
             }
-            let node = self
-                .db
-                .decls
-                .find_mut_unchecked(&GlobalIdent::from_path(&self.mod_stack));
+            let address = GlobalIdent::from_path_and_ident(&self.mod_stack, ident);
+            let node = self.db.decls.find_mut_unchecked(&address.parent());
+            println!("add ast {}", address);
             node.add_child(
                 IdentPart::from_ident(ident),
                 Decl::Ast(DeclAst {
-                    address: GlobalIdent::from_path_and_name(
-                        &self.mod_stack,
-                        ident.to_string().as_str(),
-                    ),
+                    address,
                     ast: i.clone(),
                 }),
             );

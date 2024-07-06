@@ -49,6 +49,9 @@ impl<K: Ord + Clone + Debug, V: Debug> NamedNode<K, V> {
     pub fn add_child(&mut self, key: K, value: V) {
 		let mut path = self.path.clone();
 		path.push(key.clone());
+		if self.children.contains_key(&key) {
+			// panic!("path {:?} is already used", path);
+		}
         self.children.insert(
             key,
             NamedNode {

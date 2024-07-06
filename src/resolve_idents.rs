@@ -27,7 +27,6 @@ impl Database {
         self.decls.for_each_mut(&mut |_key, decl, path| {
             match decl {
                 Decl::Ast(ast) => {
-                    BlocksClear.visit_item_mut(&mut ast.ast);
                 },
                 Decl::Import(_, _) => {},
                 Decl::Mod(_) => {},
@@ -87,7 +86,7 @@ impl Database {
     }
 }
 
-struct BlocksClear;
+pub struct BlocksClear;
 
 impl VisitMut for BlocksClear {
     fn visit_block_mut(&mut self, i: &mut syn::Block) {

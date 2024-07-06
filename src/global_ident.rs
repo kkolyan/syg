@@ -89,6 +89,19 @@ impl GlobalIdent {
         Self(s)
     }
 
+    pub fn from_path_and_ident(path: &[String], name: &Ident) -> Self {
+		if path.is_empty() {
+			return Self::from_qualified_name(name.to_string().as_str());
+		}
+        let mut s = String::new();
+        for it in path {
+            s += it;
+            s += "::"
+        }
+        s += name.to_string().as_str();
+        Self(s)
+    }
+
     pub fn from_path(path: &[String]) -> Self {
         Self(path.join("::"))
     }

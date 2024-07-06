@@ -167,6 +167,11 @@ pub struct WildcardImport {
     pub source: GlobalIdent,
 }
 
+pub struct Node {
+	decl: Decl,
+	mod_: Mod,
+}
+
 #[derive(Debug)]
 pub enum Decl {
     None,
