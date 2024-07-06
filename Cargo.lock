@@ -56,6 +56,7 @@ dependencies = [
 [[package]]
 name = "syn-rpath"
 version = "2.0.68"
+source = "git+https://github.com/kkolyan/syn-rpath#47ad34d61ffeb7944159c89f5c5822c45026b8e0"
 dependencies = [
  "proc-macro2",
  "quote",
