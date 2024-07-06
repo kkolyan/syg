@@ -1,11 +1,11 @@
-use std::fmt::Display;
+use std::{collections::VecDeque, fmt::Display};
 
 use syn::{spanned::Spanned, Ident, Path, PathArguments, PathSegment};
 use to_vec::ToVec;
 
+use crate::IdentPart;
 
-
-#[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Clone)]
+#[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Clone, Hash)]
 pub struct GlobalIdent(String);
 
 impl Display for GlobalIdent {
@@ -14,24 +14,53 @@ impl Display for GlobalIdent {
     }
 }
 
+impl From<&GlobalIdent> for Vec<IdentPart> {
+	fn from(val: &GlobalIdent) -> Self {
+		val.to_parts()
+	}
+}
+
 impl GlobalIdent {
+    pub fn to_parts(&self) -> Vec<IdentPart> {
+		if self.0.is_empty() {
+			return vec![];
+		}
+        self.0
+            .split("::")
+            .map(IdentPart::from_name)
+			.collect()
+    }
+
     pub fn qualify_syn_path(&self, path: &mut Path) {
-        for item in self.parent().0.split("::").to_vec().into_iter().rev() {
+		for part in self.parent().to_parts().iter().rev() {
             path.segments.insert(
                 0,
                 PathSegment {
-                    ident: Ident::new(item, path.span()),
+                    ident: Ident::new(part.to_string().as_str(), path.span()),
                     arguments: PathArguments::None,
                 },
             );
-        }
+		}
     }
 
     pub fn parent(&self) -> GlobalIdent {
-        GlobalIdent(self.0.rsplitn(2, "::").last().unwrap().to_owned())
+		match self.0.rsplit_once("::") {
+			Some((parent, _name)) => Self(parent.to_string()),
+			None => Self::root(),
+		}
     }
 
+	pub fn last_part(&self) -> IdentPart {
+		IdentPart::from_name(self.0.rsplit("::").next().unwrap())
+	}
+
     pub fn from_mod_and_path(mod_: &GlobalIdent, path: &[String]) -> Self {
+		if path.is_empty() {
+			return mod_.clone();
+		}
+		if mod_.0.is_empty() {
+			return Self::from_path(path);
+		}
         let mut s = mod_.0.clone();
         for it in path {
             s += "::";
@@ -41,10 +70,16 @@ impl GlobalIdent {
     }
 
     pub fn from_mod_and_name(mod_: &GlobalIdent, name: &str) -> Self {
+		if mod_.0.is_empty() {
+			return Self::from_qualified_name(name);
+		}
         Self(mod_.0.clone() + "::" + name)
     }
 
     pub fn from_path_and_name(path: &[String], name: &str) -> Self {
+		if path.is_empty() {
+			return Self::from_qualified_name(name);
+		}
         let mut s = String::new();
         for it in path {
             s += it;
@@ -58,6 +93,10 @@ impl GlobalIdent {
         Self(path.join("::"))
     }
 
+    pub fn from_ident_path(path: &[IdentPart]) -> Self {
+        Self(path.iter().map(|it| it.to_string()).to_vec().join("::"))
+    }
+
     pub fn try_replace_base(&self, from: &GlobalIdent, to: &GlobalIdent) -> Option<GlobalIdent> {
         if self.0.starts_with(&from.0) {
             let from = from.0.clone() + "::";
@@ -68,9 +107,12 @@ impl GlobalIdent {
         }
         None
     }
+
+    pub fn from_qualified_name(qualified_name: &str) -> GlobalIdent {
+        Self(qualified_name.into())
+    }
 	
-	pub(crate) fn from_qualified_name(qualified_name: &str) -> GlobalIdent {
-		Self(qualified_name.into())
+	pub fn root() -> GlobalIdent {
+		Self(Default::default())
 	}
-	
 }

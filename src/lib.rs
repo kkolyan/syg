@@ -1,6 +1,8 @@
+pub mod named_tree;
 pub mod dedoc;
 pub mod bake_wildcards;
 pub mod global_ident;
+pub mod ident_part;
 pub mod resolve_idents;
 use std::fmt::Display;
 
@@ -9,6 +11,7 @@ pub mod model;
 pub mod stopwatch;
 
 pub use global_ident::GlobalIdent;
+pub use ident_part::IdentPart;
 pub use model::*;
 
 #[extend::ext]

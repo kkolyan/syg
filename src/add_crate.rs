@@ -5,7 +5,7 @@ use quote::ToTokens;
 use syn::{parse_file, visit::Visit, Expr, Ident, Item, Lit, MetaNameValue, UseTree};
 
 use crate::{
-    Database, Decl, DeclAst, GlobalIdent, RefstrExt, WildcardImport
+    Database, Decl, DeclAst, GlobalIdent, IdentPart, ImportKind, RefstrExt, WildcardImport,
 };
 
 impl Database {
@@ -29,7 +29,22 @@ struct SymbolsExplorer<'a> {
 
 impl SymbolsExplorer<'_> {
     fn with_mod<T>(&mut self, name: &str, f: impl FnOnce(&mut SymbolsExplorer) -> T) -> T {
-        self.mod_stack.push(name.to_string().replace('-', "_"));
+        let name = name.to_string().replace('-', "_");
+        let parent_path = GlobalIdent::from_path(&self.mod_stack);
+        let parent = self.db.decls.find_mut_unchecked(&parent_path);
+
+        println!("add mod {} to {}", name, parent_path);
+
+        self.mod_stack.push(name.clone());
+
+        parent.add_child(
+            IdentPart::from_name(&name),
+            Decl::Mod(crate::Mod {
+                address: GlobalIdent::from_mod_and_name(&parent_path, &name),
+                wildcard_imported_mods: Default::default(),
+            }),
+        );
+
         let r = f(self);
         self.mod_stack.pop();
         r
@@ -88,29 +103,47 @@ impl SymbolsExplorer<'_> {
                 self.collect_uses(&it.tree, new_path);
             }
             UseTree::Name(it) => {
-                let name = it.ident.to_string();
-                self.db.decls.insert(
-                    GlobalIdent::from_path_and_name(&self.mod_stack, &name),
-                    Decl::Import(GlobalIdent::from_path_and_name(&path, &name)),
-                );
+                self.db
+                    .decls
+                    .find_mut_unchecked(&GlobalIdent::from_path(&self.mod_stack))
+                    .add_child(
+                        IdentPart::from_ident(&it.ident),
+                        Decl::Import(
+                            GlobalIdent::from_path_and_name(&path, it.ident.to_string().as_str()),
+                            ImportKind::Normal,
+                        ),
+                    );
             }
             UseTree::Rename(it) => {
-                self.db.decls.insert(
-                    GlobalIdent::from_path_and_name(
-                        &self.mod_stack,
-                        it.rename.to_string().as_str(),
-                    ),
-                    Decl::Import(GlobalIdent::from_path_and_name(
-                        &path,
-                        it.ident.to_string().as_str(),
-                    )),
-                );
+                self.db
+                    .decls
+                    .find_mut_unchecked(&GlobalIdent::from_path(&self.mod_stack))
+                    .add_child(
+                        IdentPart::from_ident(&it.rename),
+                        Decl::Import(
+                            GlobalIdent::from_path_and_name(&path, it.ident.to_string().as_str()),
+                            ImportKind::Normal,
+                        ),
+                    );
             }
             UseTree::Glob(_it) => {
-                self.db.wildcard_imports.push(Rc::new(WildcardImport {
-					target: GlobalIdent::from_path(&self.mod_stack),
-					source: GlobalIdent::from_path(&path),
-				}));
+                let current_mod = self
+                    .db
+                    .decls
+                    .find_mut_unchecked(&GlobalIdent::from_path(&self.mod_stack))
+                    .get_value_mut();
+                let current_mod = match current_mod {
+                    Decl::Mod(it) => it,
+                    _ => panic!("not a mod? WTF"),
+                };
+                current_mod
+                    .wildcard_imported_mods
+                    .insert(GlobalIdent::from_path(&path));
+
+                self.db.wildcard_imports_temp.push(Rc::new(WildcardImport {
+                    target: GlobalIdent::from_path(&self.mod_stack),
+                    source: GlobalIdent::from_path(&path),
+                }));
             }
             UseTree::Group(it) => {
                 for it in it.items.iter() {
@@ -124,28 +157,41 @@ impl SymbolsExplorer<'_> {
 impl<'ast> Visit<'ast> for SymbolsExplorer<'_> {
     fn visit_item(&mut self, i: &'ast syn::Item) {
         syn::visit::visit_item(self, i);
+        if let Item::Mod(_) = i {
+            // mods are already handled
+            return;
+        }
         if let Some(ident) = Self::ident_of_item(i) {
-			if ident == "test" {
-				return;
-			}
-			if ident == "tests" {
-				return;
-			}
-            self.db.decls.insert(
-                GlobalIdent::from_path_and_name(&self.mod_stack, ident.to_string().as_str()),
-                Decl::Ast(DeclAst::Ok(i.clone())),
+            if ident == "test" {
+                return;
+            }
+            if ident == "tests" {
+                return;
+            }
+            let node = self
+                .db
+                .decls
+                .find_mut_unchecked(&GlobalIdent::from_path(&self.mod_stack));
+            node.add_child(
+                IdentPart::from_ident(ident),
+                Decl::Ast(DeclAst {
+                    address: GlobalIdent::from_path_and_name(
+                        &self.mod_stack,
+                        ident.to_string().as_str(),
+                    ),
+                    ast: i.clone(),
+                }),
             );
         }
     }
 
     fn visit_item_mod(&mut self, i: &'ast syn::ItemMod) {
-        // println!("mod {}", i.ident);
-		if i.ident == "test" {
-			return;
-		}
-		if i.ident == "tests" {
-			return;
-		}
+        if i.ident == "test" {
+            return;
+        }
+        if i.ident == "tests" {
+            return;
+        }
         match &i.content {
             Some((_brace, content)) => {
                 self.with_mod(i.ident.to_string().as_str(), |self_| {

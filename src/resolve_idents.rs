@@ -1,59 +1,79 @@
-use std::rc::Rc;
+use std::{borrow::BorrowMut, collections::BTreeMap, mem, rc::Rc};
 
 use quote::ToTokens;
-use syn::{visit_mut::VisitMut, Item, PathResolution};
+use syn::{visit::Visit, visit_mut::VisitMut, Item, Path, PathResolution};
 use to_vec::ToVec;
 
 use crate::{
-    dedoc::ItemExt, stopwatch::start_watch, Database, Decl, DeclAst, GlobalIdent, WildcardImport,
+    dedoc::ItemExt, ident_part::RefSliceOfIdentPartExt, named_tree::NamedNode, stopwatch::start_watch, Database, Decl, DeclAst, GlobalIdent, IdentPart, Mod, UnresolvedCtx, WildcardImport
 };
 
 impl Database {
     pub(crate) fn resolve_idents(&mut self) {
         let _ri = start_watch("resolve_idents");
-        for (ident, decl) in self.decls.iter() {
+        self.decls.for_each_mut(&mut |k, decl, path| {
+            let ident = GlobalIdent::from_ident_path(k);
             if let Decl::Ast(decl) = decl {
                 println!(
                     "decl {} -> {}",
                     ident,
-                    decl.unwrap().dedoc().to_token_stream()
+                    decl.ast.dedoc().to_token_stream()
                 );
             }
-            if let Decl::Import(import) = decl {
-                println!(
-                    "decl {} -> (use) {}",
-                    ident,
-                    import,
-                );
+            if let Decl::Import(import, _) = decl {
+                println!("decl {} -> (use) {}", ident, import,);
             }
-        }
-        let keys = self.decls.keys().cloned().collect::<Vec<_>>();
-        for key in keys {
-            let mut decl = self
-                .decls
-                .insert(key.clone(), Decl::Ast(DeclAst::Borrowed))
-                .unwrap();
-            match &mut decl {
+        });
+        self.decls.for_each_mut(&mut |_key, decl, path| {
+            match decl {
                 Decl::Ast(ast) => {
-                    println!("resolve decl {}", key);
-                    match ast {
-                        DeclAst::Ok(ast) => {
-                            BlocksClear.visit_item_mut(ast);
-                            SymbolsResolve {
-                                db: self,
-                                parent: key.parent(),
-                                key: key.clone(),
-                            }
-                            .visit_item_mut(ast);
-                        }
-                        DeclAst::Borrowed => unimplemented!("WTF"),
-                    }
-                }
-                Decl::Import(_ident) => {}
-                Decl::WildcardImport(_ident, _w) => {}
+                    BlocksClear.visit_item_mut(&mut ast.ast);
+                },
+                Decl::Import(_, _) => {},
+                Decl::Mod(_) => {},
+                Decl::None => unimplemented!("path: {}", path.to_global_path()),
             }
-            self.decls.insert(key, decl);
-        }
+        });
+        let mut resolved: NamedNode<IdentPart, Option<Item>> = Default::default();
+        let mut unresolved: BTreeMap<String, UnresolvedCtx> = Default::default();
+
+        self.decls.for_each(&mut |key, decl| {
+            let key = GlobalIdent::from_ident_path(key);
+            match &decl {
+                Decl::Ast(decl) => {
+                    println!("resolve decl {}", key);
+
+                    let mut ast = decl.ast.clone();
+
+                    SymbolsResolve {
+                        db: self,
+                        parent: key.parent(),
+                        key: key.clone(),
+                        unresolved: &mut unresolved
+                    }
+                    .visit_item_mut(&mut ast);
+
+                    resolved.find_or_create(&key, |_| None).set_value(Some(ast));
+                }
+                Decl::Import(_ident, _) => {}
+                Decl::Mod(_) => {},
+                Decl::None => unimplemented!(),
+            }
+        });
+
+        self.decls.left_join(Some(&resolved), &mut |decls, resolved| {
+            match decls {
+                Decl::Ast(ast) => {
+                    if let Some(Some(resolved)) = resolved {
+                        ast.ast = resolved.clone();
+                    }
+                },
+                Decl::Import(_, _) => {},
+                Decl::Mod(_) => {},
+                Decl::None => unimplemented!(),
+            }
+        });
+
 
         for (ident, ctx) in self.unresolved.iter() {
             println!("unresolved: {ident}");
@@ -76,23 +96,25 @@ impl VisitMut for BlocksClear {
 }
 
 struct SymbolsResolve<'a> {
-    db: &'a mut Database,
+    db: &'a Database,
     parent: GlobalIdent,
     key: GlobalIdent,
+    unresolved: &'a mut BTreeMap<String, UnresolvedCtx>,
 }
 
 impl VisitMut for SymbolsResolve<'_> {
-    fn visit_attribute_mut(&mut self, i: &mut syn::Attribute) {}
+    fn visit_attribute_mut(&mut self, _i: &mut syn::Attribute) {}
 
-    fn visit_visibility_mut(&mut self, i: &mut syn::Visibility) {
-    }
+    fn visit_visibility_mut(&mut self, _i: &mut  syn::Visibility) {}
 
-    fn visit_expr_mut(&mut self, i: &mut syn::Expr) {
-    }
+    fn visit_expr_mut(&mut self, _i: &mut  syn::Expr) {}
 
-    fn visit_path_mut(&mut self, i: &mut syn::Path) {
+    fn visit_path_mut(&mut self, i: &mut  syn::Path) {
         println!("  visit {}", i.to_token_stream());
         let path = i.segments.iter().map(|it| it.ident.to_string()).to_vec();
+        if path.len() == 1 && path[0] == "Self" {
+            return;
+        }
         let candidates = [
             GlobalIdent::from_mod_and_path(&self.parent, &path),
             GlobalIdent::from_path(&path),
@@ -105,26 +127,20 @@ impl VisitMut for SymbolsResolve<'_> {
                 self.key.qualify_syn_path(&mut res);
                 i.resolution = PathResolution::Resolved(res.clone().into());
                 println!("      resolved to {}", res.to_token_stream());
-                return;
+                break;
             }
 
-            if let Some((ident, decl)) = self.db.lookup_decl(&candidate) {
-                let decl = match decl {
-                    DeclAst::Ok(it) => it,
-                    DeclAst::Borrowed => panic!(
-                        "WTF? self-refering should be handled above. i: {}, parent: {}",
-                        i.to_token_stream(),
-                        self.parent
-                    ),
-                };
-                if let Item::Type(decl) = decl {
+            if let Some(DeclAst { address, ast }) = self.db.lookup_decl(&candidate) {
+                println!("      resolved to address {}", address);
+                if let Item::Type(decl) = ast {
                     println!("      type {}", decl.to_token_stream());
                 } else {
+                    println!("      ast {}", ast.to_token_stream());
                     let mut res = i.clone();
-                    ident.qualify_syn_path(&mut res);
+                    address.qualify_syn_path(&mut res);
                     i.resolution = PathResolution::Resolved(res.clone().into());
                     println!("      resolved to {}", res.to_token_stream());
-                    return;
+                    break;
                 }
             }
         }
@@ -133,19 +149,24 @@ impl VisitMut for SymbolsResolve<'_> {
 
         let nearest_ident = GlobalIdent::from_mod_and_path(&self.parent, &path);
         println!("      nearest_ident: {}", &nearest_ident);
-        let nearest_resolution_candidate = match self.db.decls.get(&nearest_ident) {
-            Some(decl) => {
-                match decl {
-                    Decl::Ast(_ast) => nearest_ident.to_string(),
-                    Decl::Import(ident) => ident.to_string(),
-                    Decl::WildcardImport(ident, _) => ident.to_string(),
-                }
+        let nearest_resolution_candidate = match self.db.decls.find_value(&nearest_ident) {
+            Some(decl) => match decl {
+                Decl::Ast(_ast) => nearest_ident.to_string(),
+                Decl::Import(ident, _) => ident.to_string(),
+                Decl::Mod(_) => panic!("type resolved to a mod? WTF"),
+                Decl::None => unimplemented!(),
             },
             None => path.join("::"),
         };
-        println!("      nearest_resolution_candidate: {}", &nearest_resolution_candidate);
-        
-        let ctx = self.db.unresolved.entry(nearest_resolution_candidate).or_default();
+        println!(
+            "      nearest_resolution_candidate: {}",
+            &nearest_resolution_candidate
+        );
+
+        let ctx = self
+            .unresolved
+            .entry(nearest_resolution_candidate)
+            .or_default();
 
         ctx.scopes.insert(self.parent.clone());
         ctx.requestors.insert(self.key.clone());
