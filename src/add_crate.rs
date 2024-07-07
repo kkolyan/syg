@@ -7,7 +7,7 @@ use syn::{
 };
 
 use crate::{
-    eval_cfg::DeleteByCfg, resolve_idents::BlocksClear, Binding, Database, Decl, DeclAst, GlobalIdent, IdentPart, ImportKind, RefstrExt, WildcardImport
+    eval_cfg::DeleteByCfg, resolve_idents::BlocksClear, Ast, Binding, Database, Decl, DeclAst, GlobalIdent, IdentPart, ImportKind, RefstrExt, WildcardImport
 };
 
 impl Database {
@@ -201,7 +201,7 @@ impl<'ast> Visit<'ast> for SymbolsExplorer<'_> {
 
             *field = Some(DeclAst {
                 address,
-                ast: Some(i.clone()),
+                ast: Ast::Real(i.clone()),
             });
         }
     }

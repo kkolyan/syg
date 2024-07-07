@@ -1,3 +1,6 @@
+pub mod check_path_resolved;
+#[allow(clippy::collapsible_match)]
+pub mod inline_types;
 pub mod lookup_decl;
 pub mod display_utils;
 pub mod eval_cfg;

@@ -6,11 +6,11 @@ use std::{
 };
 
 use quote::ToTokens;
-use syn::{visit::Visit, visit_mut::VisitMut, Item, Path, PathResolution};
+use syn::{visit::Visit, visit_mut::{visit_path_mut, VisitMut}, Item, Path, PathResolution};
 use to_vec::ToVec;
 
 use crate::{
-    dedoc::{ItemExt, ItemTypeExt}, display_utils::DisplaySlice, ident_part::RefSliceOfIdentPartExt, named_tree::{FromPath, NamedNode}, stopwatch::start_watch, BindingResolution, Database, Decl, DeclAst, GlobalIdent, IdentPart, Mod, UnresolvedCtx, WildcardImport
+    dedoc::{ItemExt, ItemTypeExt}, display_utils::DisplaySlice, ident_part::RefSliceOfIdentPartExt, named_tree::{FromPath, NamedNode}, stopwatch::start_watch, Ast, BindingResolution, Database, Decl, DeclAst, GlobalIdent, IdentPart, Mod, UnresolvedCtx, WildcardImport
 };
 
 #[derive(Debug, Default)]
@@ -27,7 +27,7 @@ impl<K> FromPath<K> for Resolved {
 
 impl Database {
     pub(crate) fn resolve_idents(&mut self) {
-        let _ri = start_watch("resolve_idents");
+        let _watch = start_watch("resolve_idents");
         self.decls.for_each_mut(&mut |k, decl, path| {
             let ident = GlobalIdent::from_ident_path(k);
             if let Some(decl) = &decl.type_ast {
@@ -60,7 +60,7 @@ impl Database {
 
                 let mut ast = decl.ast.clone();
 
-                if let Some(ast) = ast.as_mut() {
+                if let Ast::Real(ast) = &mut ast {
                     SymbolsResolve {
                         db: self,
                         parent: key.parent(),
@@ -71,13 +71,13 @@ impl Database {
                     .visit_item_mut(ast);
                 }
 
-                resolved.find_or_create(&key).get_value_mut().type_ast = ast;
+                resolved.find_or_create(&key).get_value_mut().type_ast = ast.into();
             }
             for decl in &decl.non_type_ast {
                 println!("resolve decl {}", key);
 
                 let mut ast = decl.ast.clone();
-                if let Some(ast) = ast.as_mut() {
+                if let Ast::Real(ast) = &mut ast {
                     SymbolsResolve {
                         db: self,
                         parent: key.parent(),
@@ -88,7 +88,7 @@ impl Database {
                     .visit_item_mut(ast);
                 }
 
-                resolved.find_or_create(&key).get_value_mut().non_type_ast = ast;
+                resolved.find_or_create(&key).get_value_mut().non_type_ast = ast.into();
             }
         });
 
@@ -100,7 +100,7 @@ impl Database {
                         ..
                     }) = resolved
                     {
-                        ast.ast = Some(resolved.clone());
+                        ast.ast = Ast::Real(resolved.clone());
                     }
                 }
                 if let Some(ast) = &mut decls.type_ast {
@@ -109,7 +109,7 @@ impl Database {
                         ..
                     }) = resolved
                     {
-                        ast.ast = Some(resolved.clone());
+                        ast.ast = Ast::Real(resolved.clone());
                     }
                 }
             });
@@ -171,13 +171,13 @@ impl VisitMut for SymbolsResolve<'_> {
 
         let mut binding_resolution = BindingResolution::NotAttempted;
 
+        visit_path_mut(self, i);
+
         for candidate in candidates.iter() {
             println!("    candidate {}", candidate);
             if *candidate == self.key {
-                let mut res = i.clone();
-                self.key.qualify_syn_path(&mut res);
-                i.resolution = PathResolution::Resolved(res.clone().into());
-                println!("      resolved to {} ({:?})", res.to_token_stream(), res);
+                i.resolution = PathResolution::Resolved(self.key.to_string());
+                println!("      resolved to {}", self.key);
                 self.resolutions.find_or_create(&self.key).get_value_mut().and(BindingResolution::Fully);
                 return;
             }
@@ -186,15 +186,17 @@ impl VisitMut for SymbolsResolve<'_> {
             match resolution {
                 crate::Resolution::Fully(DeclAst { address, ast }) => {
                     println!("      resolved to address {}", address);
-                    if let Some(Item::Type(decl)) = ast {
-                        println!("      type {}", decl.dedoc().to_token_stream());
+                    if let Ast::Real(ast) = ast {
+                        if let Item::Type(decl) = ast {
+                            println!("      type {}", decl.dedoc().to_token_stream());
+                        } else {
+                            println!("      ast {}", ast.dedoc().to_token_stream());
+                        }
                     } else {
-                        println!("      ast {}", ast.to_token_stream());
+                        println!("      stub");
                     }
-                    let mut res = i.clone();
-                    address.qualify_syn_path(&mut res);
-                    i.resolution = PathResolution::Resolved(res.clone().into());
-                    println!("      resolved to {} ({:?})", res.to_token_stream(), res);
+                    i.resolution = PathResolution::Resolved(address.to_string());
+                    println!("      resolved to {}", address);
                     self.resolutions.find_or_create(&self.key).get_value_mut().and(BindingResolution::Fully);
                     return;
                 }

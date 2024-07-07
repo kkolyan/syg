@@ -11,7 +11,7 @@ use quote::{quote, ToTokens};
 use syn::{parse2, parse_str, Ident, Item, ItemStruct, Path};
 
 use crate::{
-    dedoc::ItemExt, ident_part::RefSliceOfIdentPartExt, named_tree::{FromPath, NamedNode}, Binding, Database, DeclAst, GlobalIdent, IdentPart, Resolution
+    dedoc::ItemExt, ident_part::RefSliceOfIdentPartExt, named_tree::{FromPath, NamedNode}, Ast, Binding, Database, DeclAst, GlobalIdent, IdentPart, Resolution
 };
 
 impl Database {
@@ -67,7 +67,7 @@ impl Database {
                     if it.first_part() == "std" || it.first_part() == "core" {
                         return Resolution::Fully(DeclAst {
                             address: base.path().to_global_path(),
-                            ast: None,
+                            ast: Ast::Stub,
                         });
                     }
                 }

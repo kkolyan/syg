@@ -11,10 +11,7 @@ use quote::{quote, ToTokens};
 use syn::{parse2, parse_str, Ident, Item, ItemStruct, Path};
 
 use crate::{
-    dedoc::ItemExt,
-    ident_part::RefSliceOfIdentPartExt,
-    named_tree::{FromPath, NamedNode},
-    GlobalIdent, IdentPart,
+    dedoc::ItemExt, ident_part::RefSliceOfIdentPartExt, named_tree::{FromPath, NamedNode}, stopwatch::start_watch, GlobalIdent, IdentPart
 };
 
 #[derive(Debug)]
@@ -51,6 +48,7 @@ impl Database {
         // TODO delete it
         // self.bake_wildcards();
         self.resolve_idents();
+		self.inline_types();
     }
 
     pub fn print_to(&self, f: &mut dyn fmt::Write) -> fmt::Result {
@@ -195,7 +193,7 @@ impl Binding {
             non_type_ast: Default::default(),
             type_ast: Some(DeclAst {
                 address: path,
-                ast: Some(item),
+                ast: Ast::Real(item),
             }),
             alias_for: Default::default(),
             wildcard_alias_for: Default::default(),
@@ -208,7 +206,7 @@ impl Binding {
             address: path.clone(),
             non_type_ast: Some(DeclAst {
                 address: path,
-                ast: Some(item),
+                ast: Ast::Real(item),
             }),
             type_ast: Default::default(),
             alias_for: Default::default(),
@@ -277,8 +275,37 @@ pub struct Mod {
 #[derive(Debug, Clone)]
 pub struct DeclAst {
     pub address: GlobalIdent,
-    /// it's None for stubbed types
-    pub ast: Option<Item>,
+    pub ast: Ast,
+}
+
+#[derive(Debug, Clone)]
+pub enum Ast {
+	Real(Item),
+	Stub,
+}
+
+impl Default for Ast {
+	fn default() -> Self {
+		Ast::Stub
+	}
+}
+
+impl Ast {
+	pub fn as_ref(&self) -> Option<&Item> {
+		match self {
+			Ast::Real(it) => Some(it),
+			Ast::Stub => None,
+		}
+	}
+}
+
+impl From<Ast> for Option<Item> {
+	fn from(value: Ast) -> Self {
+		match value {
+			Ast::Real(it) => Some(it),
+			Ast::Stub => None,
+		}
+	}
 }
 
 impl Display for DeclAst {

@@ -9,7 +9,7 @@ pub struct NamedNode<K, V> {
     children: BTreeMap<K, NamedNode<K, V>>,
 }
 
-impl<K, V: Default> Default for NamedNode<K, V> {
+impl<K: Ord + Clone + Debug + PathDisplay, V: Default + Debug + FromPath<K>> Default for NamedNode<K, V> {
     fn default() -> Self {
         Self {
             value: Default::default(),
@@ -24,7 +24,7 @@ pub trait PathDisplay: Sized {
 }
 
 pub trait FromPath<K>: Sized {
-	fn from_path(path: &[K]) -> Self;
+    fn from_path(path: &[K]) -> Self;
 }
 
 impl<K: Ord + Clone + Debug + PathDisplay, V: Debug + FromPath<K>> NamedNode<K, V> {
@@ -36,9 +36,9 @@ impl<K: Ord + Clone + Debug + PathDisplay, V: Debug + FromPath<K>> NamedNode<K, 
         }
     }
 
-	pub fn has_children(&self) -> bool {
-		!self.children.is_empty()
-	}
+    pub fn has_children(&self) -> bool {
+        !self.children.is_empty()
+    }
 
     pub fn children(&self) -> impl Iterator<Item = &NamedNode<K, V>> {
         self.children.values()
@@ -72,16 +72,16 @@ impl<K: Ord + Clone + Debug + PathDisplay, V: Debug + FromPath<K>> NamedNode<K, 
         let mut path = self.path.clone();
         path.push(key.clone());
         if !self.children.contains_key(&key) {
-			self.children.insert(
-				key.clone(),
-				NamedNode {
-					value: V::from_path(&path),
-					children: Default::default(),
-					path,
-				},
-			);
+            self.children.insert(
+                key.clone(),
+                NamedNode {
+                    value: V::from_path(&path),
+                    children: Default::default(),
+                    path,
+                },
+            );
         }
-		&mut self.children.get_mut(&key).unwrap().value
+        &mut self.children.get_mut(&key).unwrap().value
     }
 
     pub fn add_child(&mut self, key: K, value: V) {
@@ -98,6 +98,17 @@ impl<K: Ord + Clone + Debug + PathDisplay, V: Debug + FromPath<K>> NamedNode<K, 
                 path,
             },
         );
+    }
+
+    pub fn find<'a, 'b>(&'a self, key: impl Into<Vec<K>>) -> Option<&'a NamedNode<K, V>>
+    where
+        K: 'b,
+    {
+        let mut n = self;
+        for part in key.into() {
+            n = n.children.get(&part)?;
+        }
+        Some(n)
     }
 
     pub fn find_mut<'a, 'b>(&'a mut self, key: impl Into<Vec<K>>) -> Option<&'a mut NamedNode<K, V>>
@@ -126,10 +137,7 @@ impl<K: Ord + Clone + Debug + PathDisplay, V: Debug + FromPath<K>> NamedNode<K, 
         panic!("failed to find {:?} against {}", key, me);
     }
 
-    pub fn find_or_create<'a, 'b>(
-        &'a mut self,
-        key: impl Into<Vec<K>>,
-    ) -> &'a mut NamedNode<K, V>
+    pub fn find_or_create<'a, 'b>(&'a mut self, key: impl Into<Vec<K>>) -> &'a mut NamedNode<K, V>
     where
         K: 'b,
     {
@@ -198,12 +206,27 @@ impl<K: Ord + Clone + Debug + PathDisplay, V: Debug + FromPath<K>> NamedNode<K, 
             v.left_join(o, f);
         }
     }
+	
+	pub fn node_count(&self) -> usize {
+		1 + self.children.values().map(|it| it.node_count()).sum::<usize>()
+	}
 }
 
+impl<T, K> FromPath<K> for Option<T> {
+    fn from_path(_path: &[K]) -> Self {
+        None
+    }
+}
 
-impl <T, K> FromPath<K> for Option<T> {
-	fn from_path(_path: &[K]) -> Self {
-		None
+impl<T, K> FromPath<K> for Vec<T> {
+    fn from_path(_path: &[K]) -> Self {
+		Default::default()
+	}
+}
+
+impl PathDisplay for usize {
+	fn display_path(path: &[Self]) -> String {
+		format!("{:?}", path)
 	}
 }
 
