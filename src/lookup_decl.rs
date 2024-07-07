@@ -48,6 +48,16 @@ impl Database {
         );
         let value = base.get_value();
 
+        for (import, _kind) in value.alias_for.iter() {
+            println!("      {}import {}", indent, import);
+            let mut new_path = import.to_parts();
+            new_path.extend_from_slice(path);
+            if let Resolution::Fully(result) =
+                self.lookup_internal(&self.decls, &new_path, depth + 1, checked)
+            {
+                return Resolution::Fully(result);
+            }
+        }
         if path.is_empty() {
             if let Some(ast) = &value.type_ast {
                 return Resolution::Fully(ast.clone());
@@ -69,18 +79,6 @@ impl Database {
                 );
                 return Resolution::Partially(value.alias_for.first().unwrap().0.clone());
             }
-        }
-        for (import, _kind) in value.alias_for.iter() {
-            println!("      {}import {}", indent, import);
-            let mut new_path = import.to_parts();
-            new_path.extend_from_slice(path);
-            if let Resolution::Fully(result) =
-                self.lookup_internal(&self.decls, &new_path, depth + 1, checked)
-            {
-                return Resolution::Fully(result);
-            }
-        }
-		if path.is_empty() {
 			return Resolution::Failed;
 		}
         println!(

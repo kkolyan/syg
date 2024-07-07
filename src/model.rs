@@ -55,8 +55,10 @@ impl Database {
 
     pub fn print_to(&self, f: &mut dyn fmt::Write) -> fmt::Result {
         writeln!(f, "decls:")?;
-        self.decls.for_each(&mut |ident, _decl| {
-            writeln!(f, "  - {}", GlobalIdent::from_ident_path(ident)).unwrap();
+        self.decls.for_each(&mut |ident, decl| {
+			if decl.type_ast.is_some() || decl.non_type_ast.is_some() {
+				writeln!(f, "  - {} (resolution: {:?})", GlobalIdent::from_ident_path(ident), decl.resolution).unwrap();
+			}
         });
         writeln!(f, "use_wildcards:")?;
         for wildcard in self.wildcard_imports_temp.iter() {
@@ -102,6 +104,71 @@ pub struct Binding {
     pub alias_for: Vec<(GlobalIdent, ImportKind)>,
     /// means this binding imports all children from all these binding
     pub wildcard_alias_for: BTreeSet<GlobalIdent>,
+    pub resolution: BindingResolution,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum BindingResolution {
+    NotAttempted,
+    Fully,
+    Partially,
+    Failed,
+}
+
+impl BindingResolution {
+    pub fn and(&mut self, other: BindingResolution) {
+        match other {
+            BindingResolution::NotAttempted => {}
+            BindingResolution::Fully => {
+                *self = match self {
+                    BindingResolution::NotAttempted => BindingResolution::Fully,
+                    BindingResolution::Fully => BindingResolution::Fully,
+                    BindingResolution::Partially => BindingResolution::Partially,
+                    BindingResolution::Failed => BindingResolution::Failed,
+                }
+            }
+            BindingResolution::Partially => {
+                *self = match self {
+                    BindingResolution::Failed => BindingResolution::Failed,
+                    _ => BindingResolution::Partially,
+                }
+            }
+            BindingResolution::Failed => *self = BindingResolution::Failed,
+        }
+    }
+
+    pub fn or(&mut self, other: BindingResolution) {
+        match other {
+            BindingResolution::NotAttempted => {}
+            BindingResolution::Fully => {
+                *self = BindingResolution::Fully
+            }
+            BindingResolution::Partially => {
+                *self = match self {
+                    BindingResolution::Fully => BindingResolution::Fully,
+                    _ => BindingResolution::Partially,
+                }
+            }
+            BindingResolution::Failed => {
+                *self = match self {
+                    BindingResolution::NotAttempted => BindingResolution::Failed,
+                    _ => *self,
+                }
+			},
+        }
+    }
+}
+
+impl FromPath<IdentPart> for BindingResolution {
+    fn from_path(_path: &[IdentPart]) -> Self {
+        BindingResolution::NotAttempted
+    }
+}
+
+impl Default for BindingResolution {
+    fn default() -> Self {
+        Self::NotAttempted
+    }
 }
 
 impl FromPath<IdentPart> for Binding {
@@ -118,6 +185,7 @@ impl Binding {
             type_ast: Default::default(),
             alias_for: Default::default(),
             wildcard_alias_for: Default::default(),
+            resolution: BindingResolution::NotAttempted,
         }
     }
 
@@ -131,6 +199,7 @@ impl Binding {
             }),
             alias_for: Default::default(),
             wildcard_alias_for: Default::default(),
+            resolution: BindingResolution::NotAttempted,
         }
     }
 
@@ -144,6 +213,7 @@ impl Binding {
             type_ast: Default::default(),
             alias_for: Default::default(),
             wildcard_alias_for: Default::default(),
+            resolution: BindingResolution::NotAttempted,
         }
     }
 }

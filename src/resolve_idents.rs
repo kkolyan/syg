@@ -10,7 +10,7 @@ use syn::{visit::Visit, visit_mut::VisitMut, Item, Path, PathResolution};
 use to_vec::ToVec;
 
 use crate::{
-    dedoc::{ItemExt, ItemTypeExt}, display_utils::DisplaySlice, ident_part::RefSliceOfIdentPartExt, named_tree::{FromPath, NamedNode}, stopwatch::start_watch, Database, Decl, DeclAst, GlobalIdent, IdentPart, Mod, UnresolvedCtx, WildcardImport
+    dedoc::{ItemExt, ItemTypeExt}, display_utils::DisplaySlice, ident_part::RefSliceOfIdentPartExt, named_tree::{FromPath, NamedNode}, stopwatch::start_watch, BindingResolution, Database, Decl, DeclAst, GlobalIdent, IdentPart, Mod, UnresolvedCtx, WildcardImport
 };
 
 #[derive(Debug, Default)]
@@ -50,6 +50,7 @@ impl Database {
         });
         let mut resolved: NamedNode<IdentPart, Resolved> = Default::default();
         let mut unresolved: BTreeMap<GlobalIdent, UnresolvedCtx> = Default::default();
+        let mut resolutions: NamedNode<IdentPart, BindingResolution> = Default::default();
 
         self.decls.for_each(&mut |key, decl| {
             let key = GlobalIdent::from_ident_path(key);
@@ -65,6 +66,7 @@ impl Database {
                         parent: key.parent(),
                         key: key.clone(),
                         unresolved: &mut unresolved,
+                        resolutions: &mut resolutions,
                     }
                     .visit_item_mut(ast);
                 }
@@ -81,6 +83,7 @@ impl Database {
                         parent: key.parent(),
                         key: key.clone(),
                         unresolved: &mut unresolved,
+                        resolutions: &mut resolutions,
                     }
                     .visit_item_mut(ast);
                 }
@@ -111,6 +114,13 @@ impl Database {
                 }
             });
 
+            self.decls
+                .left_join(Some(&resolutions), &mut |decls, resolution| {
+                    if let Some(resolution) = resolution {
+                        decls.resolution.and(*resolution);
+                    }
+                });
+
         for (ident, ctx) in self.unresolved.iter() {
             println!("unresolved: {ident}");
             for it in ctx.scopes.iter() {
@@ -136,6 +146,7 @@ struct SymbolsResolve<'a> {
     parent: GlobalIdent,
     key: GlobalIdent,
     unresolved: &'a mut BTreeMap<GlobalIdent, UnresolvedCtx>,
+    resolutions: &'a mut NamedNode<IdentPart, BindingResolution>,
 }
 
 impl VisitMut for SymbolsResolve<'_> {
@@ -157,6 +168,8 @@ impl VisitMut for SymbolsResolve<'_> {
         ];
 
         let mut partial_resolutions: BTreeSet<GlobalIdent> = Default::default();
+
+        let mut binding_resolution = BindingResolution::NotAttempted;
 
         for candidate in candidates.iter() {
             println!("    candidate {}", candidate);
@@ -181,16 +194,20 @@ impl VisitMut for SymbolsResolve<'_> {
                     address.qualify_syn_path(&mut res);
                     i.resolution = PathResolution::Resolved(res.clone().into());
                     println!("      resolved to {}", res.to_token_stream());
+                    self.resolutions.find_or_create(&self.key).get_value_mut().and(BindingResolution::Fully);
                     return;
                 }
                 crate::Resolution::Partially(it) => {
-                    partial_resolutions.insert(it);
+                    partial_resolutions.insert(it.clone());
+                    binding_resolution.or(BindingResolution::Partially);
                 }
                 crate::Resolution::Failed => {},
             }
         }
         println!("    unresolved");
         i.resolution = PathResolution::Failed;
+        binding_resolution.or(BindingResolution::Failed);
+        self.resolutions.find_or_create(&self.key).get_value_mut().and(binding_resolution);
 
         println!("    partial resolutions:");
         for it in partial_resolutions.iter() {
