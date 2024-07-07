@@ -1,10 +1,19 @@
-use syn::{visit_mut::{*}, Item};
+use syn::{visit_mut::*, Item, ItemType};
 
 #[extend::ext]
 pub impl Item {
 	fn dedoc(&self) -> Item {
 		let mut copy = self.clone();
 		DedocVisit.visit_item_mut(&mut copy);
+		copy
+	}
+}
+
+#[extend::ext]
+pub impl ItemType {
+	fn dedoc(&self) -> ItemType {
+		let mut copy = self.clone();
+		DedocVisit.visit_item_type_mut(&mut copy);
 		copy
 	}
 }

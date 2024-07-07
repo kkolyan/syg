@@ -10,7 +10,7 @@ use syn::{visit::Visit, visit_mut::VisitMut, Item, Path, PathResolution};
 use to_vec::ToVec;
 
 use crate::{
-    dedoc::ItemExt, display_utils::DisplaySlice, ident_part::RefSliceOfIdentPartExt, named_tree::{FromPath, NamedNode}, stopwatch::start_watch, Database, Decl, DeclAst, GlobalIdent, IdentPart, Mod, UnresolvedCtx, WildcardImport
+    dedoc::{ItemExt, ItemTypeExt}, display_utils::DisplaySlice, ident_part::RefSliceOfIdentPartExt, named_tree::{FromPath, NamedNode}, stopwatch::start_watch, Database, Decl, DeclAst, GlobalIdent, IdentPart, Mod, UnresolvedCtx, WildcardImport
 };
 
 #[derive(Debug, Default)]
@@ -173,16 +173,15 @@ impl VisitMut for SymbolsResolve<'_> {
                 crate::Resolution::Fully(DeclAst { address, ast }) => {
                     println!("      resolved to address {}", address);
                     if let Some(Item::Type(decl)) = ast {
-                        println!("      type {}", decl.to_token_stream());
-                        panic!("what to do here?");
+                        println!("      type {}", decl.dedoc().to_token_stream());
                     } else {
                         println!("      ast {}", ast.to_token_stream());
-                        let mut res = i.clone();
-                        address.qualify_syn_path(&mut res);
-                        i.resolution = PathResolution::Resolved(res.clone().into());
-                        println!("      resolved to {}", res.to_token_stream());
-                        return;
                     }
+                    let mut res = i.clone();
+                    address.qualify_syn_path(&mut res);
+                    i.resolution = PathResolution::Resolved(res.clone().into());
+                    println!("      resolved to {}", res.to_token_stream());
+                    return;
                 }
                 crate::Resolution::Partially(it) => {
                     partial_resolutions.insert(it);
@@ -193,7 +192,7 @@ impl VisitMut for SymbolsResolve<'_> {
         println!("    unresolved");
         i.resolution = PathResolution::Failed;
 
-        println!("      partial resolutions:");
+        println!("    partial resolutions:");
         for it in partial_resolutions.iter() {
             println!("        {}", it);
         }
@@ -202,7 +201,7 @@ impl VisitMut for SymbolsResolve<'_> {
             panic!("multiple partial resolutions: {:?}", partial_resolutions);
         }
         if partial_resolutions.is_empty() {
-            println!("no resolutions found for {}", DisplaySlice(&candidates));
+            println!("    no resolutions found for {}", DisplaySlice(&candidates));
             partial_resolutions = BTreeSet::from(candidates);
         }
 

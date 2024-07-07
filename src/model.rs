@@ -90,14 +90,14 @@ impl Database {
             }
             if !value.alias_for.is_empty() {
                 for (it, _) in value.alias_for.iter() {
-                    if it.first_part() == "std" {
+                    if it.first_part() == "std" || it.first_part() == "core" {
                         return Resolution::Fully(DeclAst {
                             address: base.path().to_global_path(),
                             ast: None,
                         });
                     }
                 }
-                assert!(value.alias_for.len() == 1, "{}", value);
+                assert!(value.alias_for.len() == 1, "cannot choose partial resolution: {}", value);
                 println!(
                     "      {}partial resolution by alias \"{}\"",
                     indent,
@@ -105,7 +105,6 @@ impl Database {
                 );
                 return Resolution::Partially(value.alias_for.first().unwrap().0.clone());
             }
-            panic!("cannot resolve type to {}", value);
         }
         for (import, _kind) in value.alias_for.iter() {
             println!("      {}import {}", indent, import);
@@ -117,6 +116,9 @@ impl Database {
                 return Resolution::Fully(result);
             }
         }
+		if path.is_empty() {
+			return Resolution::Failed;
+		}
         println!(
             "      {}checking as a mod \"{}\"",
             indent,

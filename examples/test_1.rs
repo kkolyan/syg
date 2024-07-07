@@ -50,5 +50,5 @@ fn main() {
     let mut f = String::new();
     db.print_to(&mut f).unwrap();
 
-    fs::write("examples/test_1.yaml", f).unwrap();
+    fs::write("test_1.yaml", f).unwrap();
 }
