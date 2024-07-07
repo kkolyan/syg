@@ -21,6 +21,13 @@ impl From<&GlobalIdent> for Vec<IdentPart> {
 }
 
 impl GlobalIdent {
+	pub fn first_part(&self) -> IdentPart {
+		if self.0.is_empty() {
+			panic!("is empty");
+		}
+		IdentPart::from_name(self.0.split("::").next().unwrap())
+	}
+
     pub fn to_parts(&self) -> Vec<IdentPart> {
 		if self.0.is_empty() {
 			return vec![];
@@ -51,6 +58,9 @@ impl GlobalIdent {
     }
 
 	pub fn last_part(&self) -> IdentPart {
+		if self.0.is_empty() {
+			panic!("is empty")
+		}
 		IdentPart::from_name(self.0.rsplit("::").next().unwrap())
 	}
 

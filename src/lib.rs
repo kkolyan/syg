@@ -1,3 +1,4 @@
+pub mod display_utils;
 pub mod eval_cfg;
 pub mod named_tree;
 pub mod dedoc;

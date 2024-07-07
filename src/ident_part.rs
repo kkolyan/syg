@@ -24,6 +24,12 @@ impl IdentPart {
 	}
 }
 
+impl PartialEq<&str> for IdentPart {
+	fn eq(&self, other: &&str) -> bool {
+		self.0 == *other
+	}
+}
+
 #[extend::ext]
 pub impl &[IdentPart] {
 	fn to_global_path(&self) -> GlobalIdent {

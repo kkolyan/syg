@@ -57,9 +57,15 @@ impl SymbolsExplorer<'_> {
         let content = fs::read(fs_path).unwrap();
         let content = from_utf8(&content).unwrap();
         let mut ast = parse_file(content).unwrap();
+        let prelude = parse_file(concat!(
+            include_str!("../resources/std_prelude_v1.rs"),
+            include_str!("../resources/core_prelude_v1.rs"),
+            include_str!("../resources/core_prelude_2021.rs"),
+        )).unwrap();
         BlocksClear.visit_file_mut(&mut ast);
         DeleteByCfg.visit_file_mut(&mut ast);
         self.with_mod(name, |visitor| {
+            visitor.visit_file(&prelude);
             visitor.visit_file(&ast);
         });
     }
@@ -195,7 +201,7 @@ impl<'ast> Visit<'ast> for SymbolsExplorer<'_> {
 
             *field = Some(DeclAst {
                 address,
-                ast: i.clone(),
+                ast: Some(i.clone()),
             });
         }
     }
