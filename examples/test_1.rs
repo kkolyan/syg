@@ -14,7 +14,7 @@ fn main() {
     db.add_crate("c:/dev/rust/fyrox_lua/engine", "fyrox-scripts");
     db.add_crate("c:/dev/rust/fyrox_lua/engine", "fyrox-sound");
     db.add_crate("c:/dev/rust/fyrox_lua/engine", "fyrox-ui");
-    db.add_crate("c:/dev/rust", "nalgebra");
+    db.add_crate_expanded("c:/dev/rust", "nalgebra");
 	db.add_type_stub("usize");
 	db.add_type_stub("u8");
 	db.add_type_stub("u16");

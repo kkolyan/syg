@@ -6,7 +6,7 @@ use std::{
 };
 
 use quote::ToTokens;
-use syn::{visit::Visit, visit_mut::{visit_path_mut, VisitMut}, Item, Path, PathResolution};
+use syn::{visit::Visit, visit_mut::{visit_item_type_mut, visit_path_mut, VisitMut}, Ident, Item, Path, PathResolution};
 use to_vec::ToVec;
 
 use crate::{
@@ -67,6 +67,7 @@ impl Database {
                         key: key.clone(),
                         unresolved: &mut unresolved,
                         resolutions: &mut resolutions,
+                        generics: Default::default(),
                     }
                     .visit_item_mut(ast);
                 }
@@ -84,6 +85,7 @@ impl Database {
                         key: key.clone(),
                         unresolved: &mut unresolved,
                         resolutions: &mut resolutions,
+                        generics: Default::default(),
                     }
                     .visit_item_mut(ast);
                 }
@@ -147,6 +149,7 @@ struct SymbolsResolve<'a> {
     key: GlobalIdent,
     unresolved: &'a mut BTreeMap<GlobalIdent, UnresolvedCtx>,
     resolutions: &'a mut NamedNode<IdentPart, BindingResolution>,
+    generics: BTreeSet<Ident>,
 }
 
 impl VisitMut for SymbolsResolve<'_> {
@@ -156,10 +159,40 @@ impl VisitMut for SymbolsResolve<'_> {
 
     fn visit_expr_mut(&mut self, _i: &mut syn::Expr) {}
 
+    fn visit_item_type_mut(&mut self, i: &mut syn::ItemType) {
+        let mut params: BTreeSet<Ident> = Default::default();
+        for it in i.generics.params.iter() {
+            match it {
+                syn::GenericParam::Lifetime(it) => {},
+                syn::GenericParam::Type(it) => {
+                    params.insert(it.ident.clone());
+                    if !self.generics.insert(it.ident.clone()) {
+                        panic!("duplicate generic param?");
+                    }
+                },
+                syn::GenericParam::Const(it) => {
+                    params.insert(it.ident.clone());
+                    if !self.generics.insert(it.ident.clone()) {
+                        panic!("duplicate generic param?");
+                    }
+                },
+            }
+        }
+        visit_item_type_mut(self, i);
+        for it in params {
+            self.generics.remove(&it);
+        }
+    }
+
     fn visit_path_mut(&mut self, i: &mut syn::Path) {
         println!("  visit {}", i.to_token_stream());
         let path = i.segments.iter().map(|it| it.ident.to_string()).to_vec();
         if path.len() == 1 && path[0] == "Self" {
+            return;
+        }
+        if i.segments.len() == 1 && self.generics.contains(&i.segments[0].ident) {
+            i.resolution = PathResolution::Resolved(format!("<{}>", i.segments[0].ident));
+            self.resolutions.find_or_create(&self.key).get_value_mut().and(BindingResolution::Fully);
             return;
         }
         let candidates = [

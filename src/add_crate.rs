@@ -21,6 +21,20 @@ impl Database {
         };
         visitor.add_file(name, &lib_path);
     }
+
+    pub fn add_crate_expanded(&mut self, base_path: &str, name: &str) {
+        let src_path = base_path.concat("/").concat(name).concat("/src");
+        let lib_path = base_path.concat("/").concat(name).add_file_segment("expanded.rs");
+        let mut visitor = SymbolsExplorer {
+            crate_src: src_path.to_string(),
+            mod_stack: Default::default(),
+            db: self,
+        };
+        if fs::metadata(&lib_path).is_err() {
+            panic!("file {:?} not found. please run `cargo expand > expanded.rs` in the {:?} directory", lib_path, base_path.concat("/").concat(name));
+        }
+        visitor.add_file(name, &lib_path);
+    }
 }
 
 struct SymbolsExplorer<'a> {
