@@ -177,8 +177,9 @@ impl VisitMut for SymbolsResolve<'_> {
                 let mut res = i.clone();
                 self.key.qualify_syn_path(&mut res);
                 i.resolution = PathResolution::Resolved(res.clone().into());
-                println!("      resolved to {}", res.to_token_stream());
-                break;
+                println!("      resolved to {} ({:?})", res.to_token_stream(), res);
+                self.resolutions.find_or_create(&self.key).get_value_mut().and(BindingResolution::Fully);
+                return;
             }
 
             let resolution = self.db.lookup_decl(candidate);
@@ -193,7 +194,7 @@ impl VisitMut for SymbolsResolve<'_> {
                     let mut res = i.clone();
                     address.qualify_syn_path(&mut res);
                     i.resolution = PathResolution::Resolved(res.clone().into());
-                    println!("      resolved to {}", res.to_token_stream());
+                    println!("      resolved to {} ({:?})", res.to_token_stream(), res);
                     self.resolutions.find_or_create(&self.key).get_value_mut().and(BindingResolution::Fully);
                     return;
                 }
